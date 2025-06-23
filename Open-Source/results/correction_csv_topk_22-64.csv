@@ -1,0 +1,12 @@
+sample_id,file,token_count,llm_token_count,expected_count,llm_count,tp,fp,fn,precision,recall,match,ex_llm_count,ex_tp,ex_fp,ex_fn,ex_precision,ex_recall,ex_match
+correction_report_topk_22-64.json::sample_0,correction_report_topk_22-64.json,79,22,7,4,0,4,7,0.0,0.0,0,3,2,1,5,0.6667,0.2857,0
+correction_report_topk_22-64.json::sample_1,correction_report_topk_22-64.json,78,101,7,0,0,0,7,0,0.0,0,31,1,30,6,0.0323,0.1429,0
+correction_report_topk_22-64.json::sample_2,correction_report_topk_22-64.json,92,19,11,4,0,4,11,0.0,0.0,0,9,1,8,10,0.1111,0.0909,0
+correction_report_topk_22-64.json::sample_3,correction_report_topk_22-64.json,127,62,16,11,0,11,16,0.0,0.0,0,10,2,8,14,0.2,0.125,0
+correction_report_topk_22-64.json::sample_4,correction_report_topk_22-64.json,130,62,14,11,0,11,14,0.0,0.0,0,10,2,8,12,0.2,0.1429,0
+correction_report_topk_22-64.json::sample_5,correction_report_topk_22-64.json,257,129,36,4,0,4,36,0.0,0.0,0,21,6,15,30,0.2857,0.1667,0
+correction_report_topk_22-64.json::sample_6,correction_report_topk_22-64.json,260,29,33,2,0,2,33,0.0,0.0,0,2,1,1,32,0.5,0.0303,0
+correction_report_topk_22-64.json::sample_7,correction_report_topk_22-64.json,378,372,57,4,0,4,57,0.0,0.0,0,76,29,47,28,0.3816,0.5088,0
+correction_report_topk_22-64.json::sample_8,correction_report_topk_22-64.json,355,1524,34,4,0,4,34,0.0,0.0,0,1426,1,1425,33,0.0007,0.0294,0
+correction_report_topk_22-64.json::sample_9,correction_report_topk_22-64.json,571,14,56,4,0,4,56,0.0,0.0,0,1,0,1,56,0.0,0.0,0
+correction_report_topk_22-64.json::sample_10,correction_report_topk_22-64.json,561,423,51,4,0,4,51,0.0,0.0,0,59,11,48,40,0.1864,0.2157,0

@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+
+
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# Model directories or large artifacts
+Open-Source/mistral_model/
+
+# Logs and checkpoints
+*.log
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.pkl
+
+# IDEs and Editors
+.vscode/
+.idea/
+
+# Backup files
+*.bak
+*~
+nlp/Final/DataSet_Misinfo_FAKE.csv
+nlp/Final/DataSet_Misinfo_TRUE.csv
+nlp/Final/svm_pipeline_with_svd.pkl

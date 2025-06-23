@@ -1,0 +1,12 @@
+sample_id,file,token_count,llm_token_count,expected_count,llm_count,tp,fp,fn,precision,recall,match,ex_llm_count,ex_tp,ex_fp,ex_fn,ex_precision,ex_recall,ex_match
+correction_report_prune_0.001.json::sample_0,correction_report_prune_0.001.json,79,79,7,7,4,3,3,0.5714,0.5714,0,12,5,7,2,0.4167,0.7143,0
+correction_report_prune_0.001.json::sample_1,correction_report_prune_0.001.json,78,76,7,7,1,6,6,0.1429,0.1429,0,7,1,6,6,0.1429,0.1429,0
+correction_report_prune_0.001.json::sample_2,correction_report_prune_0.001.json,92,91,11,14,2,12,9,0.1429,0.1818,0,13,3,10,8,0.2308,0.2727,0
+correction_report_prune_0.001.json::sample_3,correction_report_prune_0.001.json,127,124,16,103,2,101,14,0.0194,0.125,0,15,4,11,12,0.2667,0.25,0
+correction_report_prune_0.001.json::sample_4,correction_report_prune_0.001.json,130,129,14,109,5,104,9,0.0459,0.3571,0,22,3,19,11,0.1364,0.2143,0
+correction_report_prune_0.001.json::sample_5,correction_report_prune_0.001.json,257,6,36,4,0,4,36,0.0,0.0,0,6,0,6,36,0.0,0.0,0
+correction_report_prune_0.001.json::sample_6,correction_report_prune_0.001.json,260,38,33,3,0,3,33,0.0,0.0,0,31,0,31,33,0.0,0.0,0
+correction_report_prune_0.001.json::sample_7,correction_report_prune_0.001.json,378,105,57,4,0,4,57,0.0,0.0,0,46,6,40,51,0.1304,0.1053,0
+correction_report_prune_0.001.json::sample_8,correction_report_prune_0.001.json,355,87,34,4,0,4,34,0.0,0.0,0,17,1,16,33,0.0588,0.0294,0
+correction_report_prune_0.001.json::sample_9,correction_report_prune_0.001.json,571,6,56,4,0,4,56,0.0,0.0,0,6,0,6,56,0.0,0.0,0
+correction_report_prune_0.001.json::sample_10,correction_report_prune_0.001.json,561,6,51,4,0,4,51,0.0,0.0,0,5,0,5,51,0.0,0.0,0
