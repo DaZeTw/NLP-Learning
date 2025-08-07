@@ -92,6 +92,10 @@ with torch.no_grad():
     kv_cache = out.past_key_values
     next_id = out.logits[:, -1].argmax(-1)
     all_ids.append(next_id.item())
+    
+    if tracker.step(next_id.item()):
+        kept_ids.append(next_id.item())
+    
     input_ids = next_id.unsqueeze(0)
 
     for step in range(max_new_tokens):

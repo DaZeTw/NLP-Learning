@@ -273,57 +273,70 @@ PRUNE_CFG = dict(
 
 
 class SingleLayerScratchpadPruner(nn.Module):
-    """Takes a HuggingFace attention module and prunes *whole scratch‑pad* tokens.
-    Drop probability grows linearly with depth.  Handles running KV‑cache shift.
-    """
-
-    def __init__(self, base_attn: nn.Module, *, layer_idx: int, total_layers: int,
-                 cfg: Dict | None = None, debug: bool = False):
+    def __init__(self, base_attn: nn.Module, *, layer_idx: int, total_layers: int, cfg: dict | None = None, debug: bool = False):
         super().__init__()
         self.attn = base_attn
         self.layer_idx = layer_idx
         self.total_layers = total_layers
         self.cfg = cfg or PRUNE_CFG
         self.debug = debug
+        self.to_drop: list[tuple[int, int]] = []
+        self.shift = 0
+        
+        # For age decay: persistent buffer of closed spans (only for early layers)
+        self.span_buffer: List[dict] = []  # [{start, end, close_time}, ...]
 
-        # runtime state
-        self.keep_mask: torch.BoolTensor | None = None  # 1 = keep, 0 = drop
-        # RELATIVE indices to prune
-        self.to_drop: set[int] = set()
-        self.shift = 0                                  # tokens already removed
-
-    # --------------------------------------------------------
-    #  Helper: layer‑specific drop probability
-    # --------------------------------------------------------
-    def _drop_prob(self) -> float:
-        depth_ratio = self.layer_idx / (self.total_layers - 1)
-        return self.cfg["prob_min"] + depth_ratio * (self.cfg["prob_max"] - self.cfg["prob_min"])
-
-    # --------------------------------------------------------
-    #  Tracker interface
-    # --------------------------------------------------------
     def append_position(self, *, keep: bool):
-        dev = self.attn.o_proj.weight.device
-        bit = torch.tensor([keep], dtype=torch.bool, device=dev)
-        self.keep_mask = bit if self.keep_mask is None else torch.cat(
-            [self.keep_mask, bit])
+        # No-op: we do not track keep_mask anymore
+        pass
 
-    def mark_positions_dropped(self, abs_idx: List[int]):
-        """Receive ABSOLUTE indices of a finished scratch‑pad span.
-        Decide *probabilistically* whether to drop them and translate to REL idx.
-        """
-        if random.random() >= self._drop_prob():
-            return  # keep whole span
+    def evaluate_and_mark(self, ledger: List[dict], gen_step: int = None, age_threshold: int = 20):
+        current_time = gen_step if gen_step is not None else 0
+        
+        if self.layer_idx < 10:
+            # Age decay logic for early layers
+            # 1. Add new spans to buffer with close timestamps
+            for rec in ledger:
+                span_with_time = {
+                    "start": rec["start"],
+                    "end": rec["end"],
+                    "close_time": current_time
+                }
+                self.span_buffer.append(span_with_time)
+                if self.debug:
+                    print(f"[L{self.layer_idx}] Added span ({rec['start']},{rec['end']}) to buffer at time {current_time}")
+            
+            # 2. Check ALL spans in buffer for age-based pruning
+            spans_to_prune = []
+            for span in self.span_buffer:
+                age = current_time - span["close_time"]
+                if age >= age_threshold:
+                    rel_start = max(0, span["start"] - self.shift)
+                    rel_end = span["end"] - self.shift
+                    if rel_end >= 0:  # Still within current KV cache
+                        self.to_drop.append((rel_start, rel_end))
+                        spans_to_prune.append(span)
+                        if self.debug:
+                            print(f"[AgeDecay L{self.layer_idx}] dropping span ({rel_start},{rel_end}) age={age}")
+            
+            # 3. Clean up buffer: remove spans that are pruned or shifted out
+            self.span_buffer = [s for s in self.span_buffer 
+                              if s not in spans_to_prune and s["end"] >= self.shift]
+            
+        else:
+            # Depth ratio drop logic for later layers (immediate decision)
+            depth_ratio = self.layer_idx / (self.total_layers - 1)
+            drop_prob = self.cfg["prob_min"] + depth_ratio * (self.cfg["prob_max"] - self.cfg["prob_min"])
+            
+            for rec in ledger:
+                if random.random() < drop_prob:
+                    rel_start = max(0, rec["start"] - self.shift)
+                    rel_end = rec["end"] - self.shift
+                    if rel_end >= 0:
+                        self.to_drop.append((rel_start, rel_end))
+                        if self.debug:
+                            print(f"[DepthDrop L{self.layer_idx}] drop span ({rel_start},{rel_end}) prob={drop_prob:.2f}")
 
-        rel = [i - self.shift for i in abs_idx if i - self.shift >= 0]
-        self.to_drop.update(rel)
-        if self.debug and rel:
-            print(
-                f"[Mark L{self.layer_idx}] drop {len(rel)} tokens  prob={self._drop_prob():.2f}")
-
-    # --------------------------------------------------------
-    #  KV compression utils (unchanged core logic)
-    # --------------------------------------------------------
     def _compress_kv(self, pkv, keep_idx):
         k, v = unpack_kv(pkv, self.layer_idx)
         k_new = k[:, :, keep_idx, :].contiguous()
@@ -335,48 +348,43 @@ class SingleLayerScratchpadPruner(nn.Module):
             return pkv, v_new, True
         return (k_new, v_new), v_new, False
 
-    # --------------------------------------------------------
     def _maybe_prune(self, pkv):
-        if not self.to_drop or self.keep_mask is None:
+        if not self.to_drop:
             return pkv, None, False, None
-
-        rel = torch.tensor(sorted(self.to_drop), device=self.keep_mask.device)
-        rel = rel[rel < len(self.keep_mask)]
-        if rel.numel() == 0:
+        k, v = unpack_kv(pkv, self.layer_idx)
+        N = k.shape[2]
+        drop_indices = set()
+        for start, end in self.to_drop:
+            drop_indices.update(range(start, end + 1))
+        keep_indices = sorted(set(range(N)) - drop_indices)
+        if not keep_indices:
             self.to_drop.clear()
             return pkv, None, False, None
-
-        old_len = len(self.keep_mask)
-        self.keep_mask[rel] = False
-        keep_idx = self.keep_mask.nonzero(as_tuple=False).squeeze(-1)
-        pkv, v_new, hard = self._compress_kv(pkv, keep_idx)
-
-        removed_now = old_len - len(keep_idx)
-        self.shift += removed_now                       # <── update shift
-        self.keep_mask = self.keep_mask[keep_idx].clone()
+        pkv, v_new, hard = self._compress_kv(pkv, torch.tensor(keep_indices, device=k.device))
+        removed_now = N - len(keep_indices)
+        self.shift += removed_now
         self.to_drop.clear()
-        return pkv, v_new, hard, keep_idx
+        return pkv, v_new, hard, torch.tensor(keep_indices, device=k.device)
 
-    # --------------------------------------------------------
     def forward(self, hidden_states, **kwargs):
         kwargs["output_attentions"] = True
         kwargs["use_cache"] = True
         ctx, attn_w = self.attn(hidden_states, **kwargs)
         pkv = kwargs.get("past_key_value", None)
         pkv, v_new, _, keep_idx = self._maybe_prune(pkv)
-        if keep_idx is None or attn_w is None or self.keep_mask is None:
+        if keep_idx is None or attn_w is None:
             return ctx, attn_w
-
         attn_w = attn_w[..., keep_idx]
         attn_w = attn_w / (attn_w.sum(-1, keepdim=True) + 1e-6)
-
-        v_base = v_new if v_new is not None else unpack_kv(pkv, self.layer_idx)[
-            1]
-        v_all = repeat_kv(v_base, self.attn.num_key_value_groups)
+        k_use, _ = unpack_kv(pkv, self.layer_idx)
+        k_use = k_use[..., keep_idx, :]
+        v_all = repeat_kv(v_new if v_new is not None else unpack_kv(
+            pkv, self.layer_idx)[1], self.attn.num_key_value_groups)
         new_ctx = torch.matmul(attn_w, v_all)
         B, H, Q, D = new_ctx.shape
         new_ctx = new_ctx.permute(0, 2, 1, 3).contiguous().view(B, Q, H * D)
-        return self.attn.o_proj(new_ctx), attn_w
+        out = self.attn.o_proj(new_ctx)
+        return out, attn_w
 
 # ============================================================
 # ScratchpadTracker (unchanged except no tail_len logic)
@@ -400,9 +408,6 @@ class ScratchpadTracker:
     def initialize_with_prompt(self, input_ids: List[int]):
         self.ids = input_ids.copy()
         self.text_buf = self.tok.decode(input_ids, skip_special_tokens=False)
-        for mod in self.mods:
-            for _ in input_ids:
-                mod.append_position(keep=True)
 
     # ------------------------------------------
     def _tail(self):
@@ -416,25 +421,20 @@ class ScratchpadTracker:
         tail = self._tail()
 
         is_open = bool(self.OPEN_RE.search(tail))
-        is_close = bool(self.CLOSE_RE.search(
-            tail) or self.FINAL_RE.search(tail))
-        keep = True
+        is_close = bool(self.CLOSE_RE.search(tail) or self.FINAL_RE.search(tail))
 
         if is_open and not self.in_pad:
             self.in_pad = True
             self.cur_pad = [pos]
-            keep = False
         elif self.in_pad:
             self.cur_pad.append(pos)
-            keep = False
             if is_close:
-                # send span to every layer wrapper
+                # send span to every layer wrapper, with gen_step for age decay
                 for mod in self.mods:
-                    mod.mark_positions_dropped(self.cur_pad)
+                    if hasattr(mod, "evaluate_and_mark"):
+                        mod.evaluate_and_mark([{"start": self.cur_pad[0], "end": self.cur_pad[-1]}], gen_step=len(self.ids), age_threshold=20)
                 self.in_pad = False
                 self.cur_pad = []
-                keep = True
 
-        for mod in self.mods:
-            mod.append_position(keep=keep)
-        return keep
+        # Always return True (all tokens are kept for output purposes)
+        return True

@@ -70,6 +70,7 @@ def customize_model(model_path: str,
             wrapper = SingleLayerScratchpadPruner(
                 blk.self_attn,
                 layer_idx=i,
+                total_layers=total_layers,
                 debug=True
             )
             blk.self_attn = wrapper
