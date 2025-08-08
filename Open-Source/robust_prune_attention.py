@@ -449,33 +449,192 @@ class SingleLayerScratchpadPruner(nn.Module):
     #     out = self.attn.o_proj(new_ctx)
     #     return out, attn_w
 
+    # def forward(self, hidden_states, **kwargs):
+    #     # Pre-attention prune
+    #     pkv = kwargs.get('past_key_value', None)
+    #     pkv, v_new, hard, keep_idx = self._maybe_prune(pkv)
+    #     kwargs['past_key_value'] = pkv
+
+    #     # Get the actual KV cache size after any pruning from previous layers
+    #     if pkv is not None:
+    #         if hard:  # DynamicCache
+    #             actual_kv_len = pkv.key_cache[self.layer_idx].shape[2] if len(pkv.key_cache) > self.layer_idx else 0
+    #         else:  # tuple cache
+    #             k_cache, v_cache = pkv
+    #             actual_kv_len = k_cache.shape[2] if k_cache is not None else 0
+    #     else:
+    #         actual_kv_len = 0
+
+    #     # Adjust cache_position to match actual KV cache size
+    #     if 'cache_position' in kwargs and kwargs['cache_position'] is not None:
+    #         cp = kwargs['cache_position']
+    #         # Calculate total shift needed to align with actual KV cache
+    #         if actual_kv_len > 0:
+    #             expected_len = cp.max().item() + 1  # Expected total length
+    #             actual_shift = expected_len - actual_kv_len
+    #             new_cp = cp - actual_shift
+    #             kwargs['cache_position'] = new_cp
+    #             if self.debug:
+    #                 print(f"[L{self.layer_idx}] 🔄 Adjusted cache_position: expected_len={expected_len}, actual_kv_len={actual_kv_len}, shift={actual_shift}")
+
+    #     # compute attention
+    #     kwargs['output_attentions'] = True
+    #     kwargs['use_cache'] = True
+    #     ctx, attn_w = self.attn(hidden_states, **kwargs)
+
+    #     if self.debug:
+    #         print(
+    #             f"[L{self.layer_idx}] 🛠 post-attn kv-shift={self.shift}, attn_w.shape={attn_w.shape}")
+    #     return ctx, attn_w
+    
+    # def forward(self, hidden_states, **kwargs):
+    # # Pre-attention prune
+    #     pkv = kwargs.get('past_key_value', None)
+    #     pkv, v_new, hard, keep_idx = self._maybe_prune(pkv)
+    #     kwargs['past_key_value'] = pkv
+
+    #     # Fix cache position to match pruned KV cache
+    #     if pkv is not None:
+    #         if hard:  # DynamicCache
+    #             current_kv_len = pkv.key_cache[self.layer_idx].shape[2] if len(pkv.key_cache) > self.layer_idx else 0
+    #         else:  # tuple cache
+    #             current_kv_len = pkv[0].shape[2] if pkv[0] is not None else 0
+            
+    #         # Create cache position that matches current KV cache size
+    #         if current_kv_len > 0:
+    #             device = hidden_states.device
+    #             new_cache_position = torch.arange(current_kv_len, device=device).unsqueeze(0)
+    #             kwargs['cache_position'] = new_cache_position
+        
+    #     # Run attention
+    #     kwargs['output_attentions'] = True
+    #     kwargs['use_cache'] = True
+    #     ctx, attn_w = self.attn(hidden_states, **kwargs)
+
+    #     if self.debug:
+    #         kv_size = pkv.key_cache[self.layer_idx].shape[2] if pkv and hard else "unknown"
+    #         print(f"[L{self.layer_idx}] 🛠 post-attn kv-shift={self.shift}, attn_w.shape={attn_w.shape}, kv_size={kv_size}")
+        
+    #     return ctx, attn_w
+    
+    # def forward(self, hidden_states, **kwargs):
+    # # Pre-attention prune
+    #     pkv = kwargs.get('past_key_value', None)
+    #     pkv, v_new, hard, keep_idx = self._maybe_prune(pkv)
+    #     kwargs['past_key_value'] = pkv
+
+    #     # DON'T modify cache_position - let it be the original token position
+    #     # The attention mechanism will handle the pruned cache correctly
+        
+    #     # Run attention
+    #     kwargs['output_attentions'] = True
+    #     kwargs['use_cache'] = True
+    #     ctx, attn_w = self.attn(hidden_states, **kwargs)
+
+    #     return ctx, attn_w
+    
     def forward(self, hidden_states, **kwargs):
         # Pre-attention prune
         pkv = kwargs.get('past_key_value', None)
         pkv, v_new, hard, keep_idx = self._maybe_prune(pkv)
         kwargs['past_key_value'] = pkv
 
-        # Adjust cache_position so mask aligns with pruned cache
-        if 'cache_position' in kwargs and kwargs['cache_position'] is not None:
-            cp = kwargs['cache_position']
-            # subtract shift from past positions
-            new_cp = cp - self.shift
-            kwargs['cache_position'] = new_cp
-            # if self.debug:
-            #     print(
-            #         f"[L{self.layer_idx}] 🔄 Adjusted cache_position by shift={self.shift}")
-
-        # compute attention
+        # CRITICAL FIX: Synchronize cache_position with actual KV cache size
+        if pkv is not None and 'cache_position' in kwargs and kwargs['cache_position'] is not None:
+            if hard:  # DynamicCache
+                actual_kv_len = pkv.key_cache[self.layer_idx].shape[2] if len(pkv.key_cache) > self.layer_idx else 0
+            else:  # tuple cache
+                actual_kv_len = pkv[0].shape[2] if pkv[0] is not None else 0
+            
+            # For autoregressive generation, cache_position should be the LAST position in the cache
+            if actual_kv_len > 0:
+                device = kwargs['cache_position'].device
+                # Set cache_position to the last position in the actual cache
+                kwargs['cache_position'] = torch.tensor([actual_kv_len - 1], device=device)
+                
+                if self.debug:
+                    print(f"[L{self.layer_idx}] 🔧 Fixed cache_position to [{actual_kv_len - 1}] for KV cache size {actual_kv_len}")
+        
+        # Run attention with synchronized parameters
         kwargs['output_attentions'] = True
         kwargs['use_cache'] = True
         ctx, attn_w = self.attn(hidden_states, **kwargs)
 
         if self.debug:
-            print(
-                f"[L{self.layer_idx}] 🛠 post-attn kv-shift={self.shift}, attn_w.shape={attn_w.shape}")
+            kv_size = pkv.key_cache[self.layer_idx].shape[2] if pkv and hard else "unknown"
+            print(f"[L{self.layer_idx}] 🛠 post-attn kv-shift={self.shift}, attn_w.shape={attn_w.shape}, kv_size={kv_size}")
+        
         return ctx, attn_w
+    
+    # def forward(self, hidden_states, **kwargs):
+    #     # Pre-attention prune
+    #     pkv = kwargs.get('past_key_value', None)
+    #     pkv, v_new, hard, keep_idx = self._maybe_prune(pkv)
+    #     kwargs['past_key_value'] = pkv
 
-# ============================================================
+    #     # Disable attention mask to avoid size mismatches
+    #     kwargs['attention_mask'] = None
+        
+    #     # Run attention
+    #     kwargs['output_attentions'] = True
+    #     kwargs['use_cache'] = True
+    #     ctx, attn_w = self.attn(hidden_states, **kwargs)
+
+    #     if self.debug:
+    #         kv_size = pkv.key_cache[self.layer_idx].shape[2] if pkv and hard else "unknown"
+    #         print(f"[L{self.layer_idx}] 🛠 post-attn kv-shift={self.shift}, attn_w.shape={attn_w.shape}, kv_size={kv_size}")
+        
+    #     return ctx, attn_w
+
+    def forward(self, hidden_states, **kwargs):
+        # Prune the cache, but don't replace it in kwargs
+        pkv = kwargs.get('past_key_value', None)
+        self._maybe_prune(pkv)  # Modifies pkv in-place
+        
+        # Let attention use the (now pruned) cache normally
+        kwargs['output_attentions'] = True
+        kwargs['use_cache'] = True
+        ctx, attn_w = self.attn(hidden_states, **kwargs)
+        
+        return ctx, attn_w
+    
+    
+    def forward(self, hidden_states, **kwargs):
+        """
+        This is the corrected forward pass.
+        1. It prunes the KV cache for the current layer *before* attention.
+        2. It passes the pruned cache to the original attention mechanism.
+        3. It does NOT modify `cache_position`, allowing the underlying
+           attention code to handle mask slicing automatically, which prevents size mismatches.
+        """
+        if self.debug:
+            # Log the state *before* pruning and attention
+            pkv_pre = kwargs.get("past_key_value", None)
+            if pkv_pre:
+                pre_kv_len = unpack_kv(pkv_pre, self.layer_idx)[0].shape[2]
+                print(f"[L{self.layer_idx}] ➡️ Pre-prune KV len: {pre_kv_len}, Current shift: {self.shift}")
+
+        # Step 1: Prune this layer's KV cache before doing anything else.
+        pkv = kwargs.get('past_key_value', None)
+        pkv, _, _, _ = self._maybe_prune(pkv)
+        kwargs['past_key_value'] = pkv
+
+        # Step 2: Call the original attention mechanism.
+        # We do not modify `cache_position` or `attention_mask`. The underlying
+        # `eager_attention_forward` will correctly slice the mask to match the
+        # (potentially smaller) size of our pruned `pkv`.
+        ctx, attn_w = self.attn(hidden_states, **kwargs)
+
+        if self.debug:
+            # Log the state *after* attention
+            pkv_post = kwargs.get("past_key_value", None)
+            if pkv_post:
+                post_kv_len = unpack_kv(pkv_post, self.layer_idx)[0].shape[2]
+                attn_w_shape = attn_w.shape if attn_w is not None else "N/A"
+                print(f"[L{self.layer_idx}] ⬅️ Post-attn KV len: {post_kv_len}, attn_w.shape: {attn_w_shape}")
+        
+        return ctx, attn_w
+    # ============================================================
 # ScratchpadTracker (unchanged except no tail_len logic)
 # ============================================================
 
